@@ -7,7 +7,7 @@ This repository is the official Tensorflow Python implementation of Deep Injecti
 
 
 <p float="center">
-<img src="https://github.com/swing-research/scattering_injective_prior/blob/main/figures/network.png" width="1000">
+<img src="https://github.com/swing-research/scattering_injective_prior/blob/main/figures/network.png" width="800">
 </p>
 
 
