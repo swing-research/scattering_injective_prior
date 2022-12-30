@@ -29,13 +29,13 @@ class Inverse_scattering(Operator):
         super(Inverse_scattering, self).__init__()
         
         if image_size == 32:
-            setup = np.load('/raid/Amir/Projects/datasets/ISP/setups/setup_32_2.0.npz')
+            setup = np.load('scattering_config/setup_32.npz')
             Gd = setup['Gd']
             Gs = setup['Gs']
             Ei = setup['Ei']
             
         elif image_size == 64:
-            setup = np.load('/raid/Amir/Projects/datasets/ISP/setups/setup_64_2.0.npz')
+            setup = np.load('scattering_config/setup_64.npz')
             Gd = setup['Gd']
             Gs = setup['Gs']
             Ei = setup['Ei']

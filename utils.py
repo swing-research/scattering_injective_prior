@@ -64,7 +64,7 @@ def Dataset_preprocessing(dataset = 'MNIST', batch_size = 64):
         
     elif dataset == 'ellipses':
         
-        images = np.load('/raid/Amir/Projects/datasets/ellipses/ellipses_diverse_64.npy')
+        images = np.load('datasets/ellipses_64.npy')
         train_images , test_images = np.split(images , [55000])
      
         r = 64    
