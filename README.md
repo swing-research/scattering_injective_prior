@@ -2,7 +2,7 @@
 [![Paper](https://img.shields.io/badge/arxiv-report-red)](https://arxiv.org/abs/2301.03092)
 [![PWC](https://img.shields.io/badge/PWC-report-blue)](https://paperswithcode.com/paper/deep-injective-prior-for-inverse-scattering)
 
-This repository is the official Tensorflow Python implementation of Deep Injective Prior for Inverse Scattering.
+This repository is the official Tensorflow Python implementation of "[Deep Injective Prior for Inverse Scattering](https://arxiv.org/abs/2301.03092)".
 
 | [**Project Page**](https://sada.dmi.unibas.ch/en/research/injective-flows)  | 
 
