@@ -1,5 +1,6 @@
 # Deep Injective Prior for Inverse Scattering
-
+[![Paper](https://img.shields.io/badge/arxiv-report-red)](https://arxiv.org/abs/2301.03092)
+[![PWC](https://img.shields.io/badge/PWC-report-blue)](https://paperswithcode.com/paper/deep-injective-prior-for-inverse-scattering)
 
 This repository is the official Tensorflow Python implementation of Deep Injective Prior for Inverse Scattering.
 
@@ -36,4 +37,16 @@ You should download the scattering configuration files for  [64x64](https://driv
 As soon as the network is trained, you can reload it to be used as a prior for solving inverse scattering for 500 iterations with learning rate 0.05 with this configuration: 30dB noise, MOG initialization, epsilon_r= 4 and optimizing over latent space:
 ```sh
 python3 train.py --reload 1 --train 0 --inv 1 --injective_depth 3 --bijective_depth 4 --dataset ellipses --gpu_num 0 --desc default  --nsteps 500 --lr_inv 0.05 --noise_snr 30 --initial_guess MOG --er 4  --optimization_mode latent_space
+```
+
+## Citation
+If you find the code or our dataset useful in your research, please consider citing the paper.
+
+```
+@article{khorashadizadeh2022deepinjective,
+  title={Deep Injective Prior for Inverse Scattering},
+  author={Khorashadizadeh, AmirEhsan and Eskandari, Sepehr and Khorashadi-Zadeh, Vahid and Dokmani{\'c}, Ivan},
+  journal={arXiv preprint arXiv:2301.03092},
+  year={2023}
+}
 ```
