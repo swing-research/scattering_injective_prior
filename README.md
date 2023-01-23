@@ -33,7 +33,7 @@ python3 train.py --train 1 --num_epochs 300 --ml_threshold 150 --injective_depth
 Each argument is explained in detail in utils.py.
 
 ### Solving inverse scattering problem using the injective generator as prior:
-You should download the scattering configuration files for  [64x64](https://drive.switch.ch/index.php/s/6HOH8PN8BonwR5W) and [32x32](https://drive.switch.ch/index.php/s/6HOH8PN8BonwR5W) resolutions and put the .npz files in the folder scattering_config/.
+You should download the scattering configuration files for  [64x64](https://drive.switch.ch/index.php/s/6HOH8PN8BonwR5W) and [32x32](https://drive.switch.ch/index.php/s/51A2ZvFLd2NI5Bj) resolutions and put the .npz files in the folder scattering_config/.
 As soon as the network is trained, you can reload it to be used as a prior for solving inverse scattering for 500 iterations with learning rate 0.05 with this configuration: 30dB noise, MOG initialization, epsilon_r= 4 and optimizing over latent space:
 ```sh
 python3 train.py --reload 1 --train 0 --inv 1 --injective_depth 3 --bijective_depth 4 --dataset ellipses --gpu_num 0 --desc default  --nsteps 500 --lr_inv 0.05 --noise_snr 30 --initial_guess MOG --er 4  --optimization_mode latent_space
