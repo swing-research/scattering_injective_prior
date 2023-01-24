@@ -55,8 +55,9 @@ class Inverse_scattering(Operator):
         self.opname = 'IS_%d'%self.n
 
     def call(self, x):
+        # x is the normalized medium between -1 and 1
         b, h, w, c = x.get_shape().as_list()
-        x = x*(self.chai/2) + self.chai/2
+        x = x*(self.chai/2) + self.chai/2 # Bring the medium to the specified contrast
         x = tf.cast(x , dtype = self.Gd.dtype)
         # gt = tf.reshape(x , [-1 , np.prod(tf.shape(x)[1:])])
         gt = tf.reshape(x , [b , -1])
@@ -100,7 +101,7 @@ class Inverse_scattering(Operator):
 
 
 class InjFlow_PGD(object):
-    """Builds a solver"""
+    """Builds a iflow solver"""
     def __init__(self, flow, encoder, pz, operator, 
                  nsteps=1000, 
                  latent_dim = 192,
@@ -111,11 +112,9 @@ class InjFlow_PGD(object):
                  prob_folder = None):
 
         self.op = operator
-
         self.flow = flow
         self.encoder = encoder
         self.pz = pz
-
         self.nsteps = nsteps
         self.latent_dim = latent_dim
         self.sample_shape = sample_shape
@@ -127,6 +126,7 @@ class InjFlow_PGD(object):
     def __call__(self, measurements, gt , lam=0):
 
         def projection(x):
+            # Project the data on the Trumpets manifold
             z, rev_obj = self.encoder(x, reverse=False)
             zhat, flow_obj = self.flow(z, reverse=False)
             p = self.pz.prior.log_prob(zhat)
@@ -151,7 +151,7 @@ class InjFlow_PGD(object):
 
 
         @tf.function
-        def gradient_step_full(x_guess, measurements):
+        def gradient_step_data(x_guess, measurements):
             with tf.GradientTape() as tape:
                 proj_x_guess, likelihood = projection(x_guess)
                 loss1 = tf.reduce_sum(tf.square(tf.cast(
@@ -175,8 +175,8 @@ class InjFlow_PGD(object):
             elif self.initial_guess == 'MOG':
                 x_guess_latent = tf.repeat(tf.expand_dims(self.pz.mu, axis=0), repeats=[25], axis=0)
                 x_guess_latent = tf.Variable(x_guess_latent, trainable=True)
-            optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
 
+            optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
             show_per_iter = 1
             PSNR_plot = np.zeros([self.nsteps//show_per_iter])
             SSIM_plot = np.zeros([self.nsteps//show_per_iter])
@@ -234,7 +234,7 @@ class InjFlow_PGD(object):
             with tqdm(total=self.nsteps) as pbar:
 
                 for i in range(self.nsteps):
-                    proj_x_guess, loss, loss1 , loss2 = gradient_step_full(x_guess, measurements)
+                    proj_x_guess, loss, loss1 , loss2 = gradient_step_data(x_guess, measurements)
 
                     if i % show_per_iter == show_per_iter-1:  
                         psnr = PSNR(proj_x_guess.numpy(), gt.numpy())
@@ -317,12 +317,12 @@ def solver(
     imageio.imwrite(os.path.join(prob_folder, 'projection.png'),x_projected)
 
 
-    solver = InjFlow_PGD(bijective_model, injective_model, pz, operator, 
+    iflow = InjFlow_PGD(bijective_model, injective_model, pz, operator, 
         latent_dim=latent_dim, learning_rate = lr_inv ,
          initial_guess = initial_guess, nsteps = nsteps,
           optimization_mode = optimization_mode, prob_folder = prob_folder)
 
-    measurements = solver.op(testing_images[:ngrid**2])
+    measurements = iflow.op(testing_images[:ngrid**2])
 
     n_snr = noise_snr
     noise_sigma = 10**(-n_snr/20.0)*tf.math.sqrt(tf.reduce_mean(tf.reduce_sum(
@@ -352,9 +352,9 @@ def solver(
     imageio.imwrite(os.path.join(prob_folder, 'BP.png'),bp)
 
     if initial_guess == 'MOG':
-        injflow_result = solver(measurements, testing_images , lam=0) 
+        injflow_result = iflow(measurements, testing_images , lam=0) 
     elif initial_guess == 'BP':
-        injflow_result = solver(measurements, testing_images, lam=1e-2) 
+        injflow_result = iflow(measurements, testing_images, lam=1e-2) 
     
     injflow_path = os.path.join(prob_folder, 'Reconstructions.png')
     injflow_result = injflow_result[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,

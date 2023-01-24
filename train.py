@@ -52,19 +52,6 @@ if gpus:
         print(e)
 
 
-# Print the experiment setup:
-print('Experiment setup:')
-print('---> num_epochs: {}'.format(num_epochs))
-print('---> batch_size: {}'.format(batch_size))
-print('---> dataset: {}'.format(dataset))
-print('---> Learning rate: {}'.format(lr))
-print('---> experiment path: {}'.format(exp_path))
-print('---> epsilon_r: {}'.format(er))
-print('---> noise_snr: {}'.format(noise_snr))
-print('---> initial guess: {}'.format(initial_guess))
-print('---> learning rate of inverse problem solver:{}'.format(lr_inv))
-print('---> optimization mode:{}'.format(optimization_mode))
-
 train_dataset , test_dataset = Dataset_preprocessing(dataset=dataset ,batch_size = batch_size)
 print('Dataset is loaded: training and test dataset shape: {} {}'.
         format(np.shape(next(iter(train_dataset))), np.shape(next(iter(test_dataset)))))
@@ -88,7 +75,7 @@ bij_model = bijective(network = 'injective',revnet_depth = bijective_depth,
                                 image_size = image_size) # Bijective network
 
 
-# call generator once to set weights (Data dependent initialization)
+# call generator once to set weights (Data dependent initialization for act norm layer)
 dummy_x = next(iter(train_dataset))
 dummy_z, _ = inj_model(dummy_x, reverse=False)
 dummy_l_z , _ = bij_model(dummy_z, reverse=False)
@@ -143,6 +130,14 @@ else:
     print("Initializing from scratch.")
 
 if run_train:
+
+    print('Training...')
+    print('---> num_epochs: {}'.format(num_epochs))
+    print('---> batch_size: {}'.format(batch_size))
+    print('---> dataset: {}'.format(dataset))
+    print('---> Learning rate: {}'.format(lr))
+    print('---> experiment path: {}'.format(exp_path))
+
     z_inters = np.zeros([len(list(train_dataset)) * batch_size , latent_dim])
     for epoch in range(num_epochs):
         epoch_start = time()
@@ -252,7 +247,16 @@ if run_train:
         print("Saved checkpoint for epoch {}: {}".format(epoch, save_path))
 
 if run_inv:
-    
+
+    print('Solving inverse scattering problem ...:')
+    print('---> dataset: {}'.format(dataset))
+    print('---> experiment path: {}'.format(exp_path))
+    print('---> epsilon_r: {}'.format(er))
+    print('---> noise_snr: {}'.format(noise_snr))
+    print('---> initial guess: {}'.format(initial_guess))
+    print('---> learning rate of inverse problem solver:{}'.format(lr_inv))
+    print('---> optimization mode:{}'.format(optimization_mode))
+
     testing_images = next(iter(test_dataset))
     operator = scattering_solver.Inverse_scattering(n_inc_wave = 12 , er = er,
         image_size = image_size)
