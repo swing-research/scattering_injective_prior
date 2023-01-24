@@ -89,41 +89,6 @@ manager = tf.train.CheckpointManager(
 if reload:
     ckpt.restore(manager.latest_checkpoint)
 
-@tf.function
-def train_step_mse(sample):
-    """MSE training of the injective sub-network"""
-
-    with tf.GradientTape() as tape:
-        
-        MSE = tf.keras.losses.MeanSquaredError()
-        z , _ = inj_model(sample, reverse= False)
-        recon = inj_model(z , reverse = True)[0]
-        mse_loss = MSE(sample , recon)
-        loss = mse_loss
-        
-        variables= tape.watched_variables()
-        grads = tape.gradient(loss, variables)
-        optimizer_inj.apply_gradients(zip(grads, variables))
-
-    return loss
-
-
-
-@tf.function
-def train_step_ml(sample):
-    """ML training of the bijective sub-network"""
-
-    with tf.GradientTape() as tape:
-        latent_sample, obj = bij_model(sample, reverse=False)
-        p = -tf.reduce_mean(pz.prior.log_prob(latent_sample))
-        j = -tf.reduce_mean(obj) # Log-det of Jacobian
-        loss =  p + j
-        variables = tape.watched_variables()
-        grads = tape.gradient(loss, variables)
-        optimizer_bij.apply_gradients(zip(grads, variables))
-
-    return loss
-
 if manager.latest_checkpoint and reload:
     print("Restored from {}".format(manager.latest_checkpoint))
 else:
@@ -144,7 +109,7 @@ if run_train:
         if epoch < ml_threshold:
             # MSE traiing of the injective network for ml-threshold epochs
             for x in train_dataset:
-                train_step_mse(x)
+                train_step_mse(x, inj_model, optimizer_inj)
                 
                 ml_loss = 0
                 p = 0
@@ -166,7 +131,7 @@ if run_train:
         else:
             # ML training of the bijective network after ml threshold epochs
             for x in z_inters_dataset:
-                ml_loss = train_step_ml(x).numpy()
+                ml_loss = train_step_ml(x, bij_model, pz, optimizer_bij).numpy()
                 
         if epoch == 0:
             # Show the number of trainable parametrs

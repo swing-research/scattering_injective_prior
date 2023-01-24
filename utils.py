@@ -5,6 +5,41 @@ import cv2
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 
+@tf.function
+def train_step_mse(sample, inj_model, optimizer_inj):
+    """MSE training of the injective sub-network"""
+
+    with tf.GradientTape() as tape:
+        
+        MSE = tf.keras.losses.MeanSquaredError()
+        z , _ = inj_model(sample, reverse= False)
+        recon = inj_model(z , reverse = True)[0]
+        mse_loss = MSE(sample , recon)
+        loss = mse_loss
+        
+        variables= tape.watched_variables()
+        grads = tape.gradient(loss, variables)
+        optimizer_inj.apply_gradients(zip(grads, variables))
+
+    return loss
+
+
+
+@tf.function
+def train_step_ml(sample, bij_model, pz, optimizer_bij):
+    """ML training of the bijective sub-network"""
+
+    with tf.GradientTape() as tape:
+        latent_sample, obj = bij_model(sample, reverse=False)
+        p = -tf.reduce_mean(pz.prior.log_prob(latent_sample))
+        j = -tf.reduce_mean(obj) # Log-det of Jacobian
+        loss =  p + j
+        variables = tape.watched_variables()
+        grads = tape.gradient(loss, variables)
+        optimizer_bij.apply_gradients(zip(grads, variables))
+
+    return loss
+
         
 def data_normalization(x):
     
