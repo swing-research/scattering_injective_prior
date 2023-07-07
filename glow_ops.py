@@ -3,6 +3,7 @@ from tensorflow.keras import layers
 import scipy
 import numpy as np
 from Unet_util import Unet
+import config
 
 
 class upsqueeze(layers.Layer):
@@ -233,7 +234,7 @@ class conv_stack(layers.Layer):
             mid_channels, 1, 1, padding='same',
             activation='relu', use_bias=False)
         self.conv3 = layers.Conv2D(
-            output_channels, 1, 1, padding='same', activation='sigmoid', use_bias=False,kernel_initializer='zeros')
+            output_channels, 3, 1, padding='same', activation='sigmoid', use_bias=False,kernel_initializer='zeros')
 
     def call(self, x):
         return self.conv3(self.conv2(self.conv1(x)))
@@ -248,8 +249,13 @@ class affine_coupling(layers.Layer):
 
     def build(self, input_shape):
         out_channels = input_shape[-1]
-        # self.conv_stack = conv_stack(128,out_channels) # regular convolutions
-        self.conv_stack = Unet(out_channels) # Unet conv stack
+
+        if config.unet_coupling:
+            self.conv_stack = Unet(out_channels) # Unet conv stack
+        
+        else:
+            self.conv_stack = conv_stack(128,out_channels) # regular convolutions
+        
 
     def call(self, x, reverse=False):
         # out_ch = x.get_shape().as_list()[-1]

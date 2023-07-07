@@ -1,9 +1,74 @@
 import tensorflow as tf
 import numpy as np
-import argparse
 import cv2
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
+import config
+from tqdm import tqdm
+from matplotlib.patches import Ellipse, Circle
+import matplotlib.pyplot as plt
+import numpy.random as rnd
+import os
+
+
+def fantom_generation(n_samples = 60000 ,
+                       num_fantom_max = 4 ,
+                       generation = True):
+    
+    if generation:
+        
+        with tqdm(total=n_samples) as pbar: 
+            for k in range(n_samples):
+                
+                num_fantom = np.random.randint(1,num_fantom_max)
+                fantoms = [Circle(rnd.uniform(3,7 , 2),
+                                  rnd.uniform(1,4))
+                        for i in range(num_fantom)]
+                
+                fig = plt.figure(figsize = ( 4, 4) , dpi = 64)
+                ax = fig.add_subplot(111 , frameon=False)
+                for e in fantoms:
+                    ax.add_artist(e)
+                    e.set_clip_box(ax.bbox)
+                    e.set_alpha(np.random.uniform(0.3 , 1))
+                    e.set_facecolor([0,0,0])
+                
+                ax.set_xlim(0, 10)
+                ax.set_ylim(0, 10)
+                
+                ax.axes.xaxis.set_visible(False)
+                ax.axes.yaxis.set_visible(False)
+                
+                plt.show()
+                fig.savefig('datasets/circles_256/{}.png'.format(k))
+                plt.close()
+    
+                pbar.set_description('generating...')
+                pbar.update(1)
+                
+    else:
+        
+        folder = 'datasets/circles_256/'
+        image_names = os.listdir(folder)
+        r = 64
+        n_samples = len(image_names)
+        
+        x = np.zeros([n_samples,r,r,1])
+        
+        with tqdm(total=n_samples) as pbar: 
+            for i in range(len(image_names)):
+                
+                image_add = folder + image_names[i]
+                image = cv2.imread(image_add)
+                if image is None:
+                    continue
+                image = 255.0 - image
+                x[i , :, :, 0] = cv2.resize(image , (r,r))[:,:,0]
+                
+                pbar.set_description('processing...')
+                pbar.update(1)
+        
+        np.save('datasets/circles_64.npy' , x)
 
 @tf.function
 def train_step_mse(sample, inj_model, optimizer_inj):
@@ -69,9 +134,9 @@ def PSNR(x_true , x_pred):
     
     s = 0
     for i in range(np.shape(x_pred)[0]):
-        s += psnr(x_pred[i],
-             x_true[i],
-             data_range=x_true[i].max() - x_true[i].min())
+        s += psnr(x_true[i],
+                  x_pred[i],
+                  data_range=x_true[i].max() - x_true[i].min())
         
     return s/np.shape(x_pred)[0]
 
@@ -79,10 +144,10 @@ def SSIM(x_true , x_pred):
     
     s = 0
     for i in range(np.shape(x_pred)[0]):
-        s += ssim(x_pred[i],
-             x_true[i],
-             data_range=x_true[i].max() - x_true[i].min(),
-             multichannel=True)
+        s += ssim(x_true[i],
+                  x_pred[i],
+                  data_range=x_true[i].max() - x_true[i].min(),
+                  multichannel=True)
         
     return s/np.shape(x_pred)[0]
 
@@ -91,9 +156,24 @@ def SSIM(x_true , x_pred):
 def Dataset_preprocessing(dataset = 'MNIST', batch_size = 64):
     
     if dataset == 'mnist':
-        r = 32
-        (train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
-        
+
+        (train_images, train_labels), (test_images, _) = tf.keras.datasets.mnist.load_data()
+        if config.ood_analysis:
+
+            np.random.seed(0)
+
+            sorted_labels_ind = np.argsort(train_labels)
+            sorted_labels = train_labels[sorted_labels_ind]
+            test_ind = np.where(sorted_labels == 6)[0][0]
+
+            train_images = train_images[sorted_labels_ind,:,:]
+            test_images = train_images[test_ind:]
+            train_images = train_images[:test_ind]
+            np.random.shuffle(test_images)
+            np.random.shuffle(train_images)
+
+
+
         train_images = np.expand_dims(train_images, axis = 3)
         test_images = np.expand_dims(test_images, axis = 3)
         
@@ -101,10 +181,14 @@ def Dataset_preprocessing(dataset = 'MNIST', batch_size = 64):
         
         images = np.load('datasets/ellipses_64.npy')
         train_images , test_images = np.split(images , [55000])
-     
-        r = 64    
 
+    elif dataset == 'circles':
         
+        images = np.load('datasets/circles_64.npy')
+        train_images , test_images = np.split(images , [55000])
+
+    r = config.img_size
+  
     train_images = image_resizer(train_images, r)
     test_images = image_resizer(test_images, r)
     train_images = data_normalization(train_images)
@@ -128,126 +212,5 @@ def Dataset_preprocessing(dataset = 'MNIST', batch_size = 64):
       
   
 
-    
-def flags():
-
-    parser = argparse.ArgumentParser()
-     
-    parser.add_argument(
-        '--num_epochs',
-        type=int,
-        default=200,
-        help='number of epochs to train for')
-    
-    parser.add_argument(
-        '--batch_size',
-        type=int,
-        default=64,
-        help='batch_size')
-
-   
-    parser.add_argument(
-        '--dataset', 
-        type=str,
-        default='mnist',
-        help='mnist or ellipses')
-    
-    parser.add_argument(
-        '--lr',
-        type=float,
-        default=1e-4,
-        help='learning rate')
-    
-    
-    parser.add_argument(
-        '--ml_threshold', 
-        type=int,
-        default= 100,
-        help='when should ml training begin')
-
-
-    parser.add_argument(
-        '--injective_depth',
-        type=int,
-        default= 3,
-        help='revnet depth of injective sub-network')
-    
-    parser.add_argument(
-        '--bijective_depth',
-        type=int,
-        default= 2,
-        help='revnet depth of bijective sub-network')
-    
-        
-    parser.add_argument(
-        '--gpu_num',
-        type=int,
-        default=0,
-        help='GPU number')
-
-    
-    parser.add_argument(
-        '--desc',
-        type=str,
-        default='Default',
-        help='add a small descriptor to the experiment')
-    
-    parser.add_argument(
-        '--train',
-        type=int,
-        default= 1,
-        help='Training or just load')
-
-    parser.add_argument(
-        '--reload',
-        type=int,
-        default= 0,
-        help='reload the existing model if exists')
-
-    ######################################################################
-    # For solving scattering
-    
-    parser.add_argument(
-        '--inv',
-        type=int,
-        default= 0,
-        help='Running inverse scattering solver')
-    
-    parser.add_argument(
-        '--noise_snr',
-        type=float,
-        default=30,
-        help='Noise SNR (dB)')
-
-    parser.add_argument(
-        '--initial_guess',
-        type=str,
-        default='MOG',
-        help='Initial guess: BP or MOG')
-
-    parser.add_argument(
-        '--er',
-        type= float,
-        default= 3,
-        help='Maximum epsilon_r of the medium')
-
-    parser.add_argument(
-        '--nsteps',
-        type= int,
-        default= 500,
-        help='Number of steps for solver optimization')
-    parser.add_argument(
-        '--optimization_mode',
-        type=str,
-        default='latent_space',
-        help='Choose where to apply optimization, latent_space or data_space')
-    
-    parser.add_argument(
-        '--lr_inv',
-        type=float,
-        default= 1e-2,
-        help='Learning rate of inverse scattering solver')
-    
-    
-    FLAGS, unparsed = parser.parse_known_args()
-    return FLAGS, unparsed
+if __name__ == '__main__':
+    fantom_generation(n_samples=60000, num_fantom_max=4, generation= False)

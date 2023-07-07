@@ -8,7 +8,7 @@ tfd = tfp.distributions
 
 
 class prior(tf.keras.Model):
-    """Defines the low dimensional distribution as Guassian"""
+    """Defines the low dimensional distribution as Gaussian"""
     def __init__(self, **kwargs):
         super(prior, self).__init__()
 

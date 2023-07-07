@@ -1,0 +1,37 @@
+num_epochs = 300 # Total number of epochs to train for'
+batch_size = 64
+dataset = 'mnist' # mnist or ellipses
+lr = 1e-4 # learning rate
+gpu_num = 0 # Gpu selection
+desc = 'ood_analysis' # add a small descriptor to the experiment
+ml_threshold = 150 # ml_threshold
+injective_depth = 3 # Injective network depth
+bijective_depth = 2 # Bijective network depth
+reload = True # reload the existing trained model if exists
+run_train = False # Train the model
+ood_analysis = True
+unet_coupling = True
+img_size = 32
+
+inference = True # Running inverse scattering solver
+run_mape = False
+problem_desc = 'full'
+reload_solver = True # reload the existing solver if exists
+lr_inv = 5e-2 # Learning rate of inverse scattering solver
+initial_guess = 'MOG' # Initial guess: BP or MOG
+noise_snr = 30 # Noise SNR (dB) added to the measurements of scattered fields
+er = 4.0 # Maximum epsilon_r of the medium
+optimization_mode = 'latent_space' # Choose where to apply optimization, latent_space or data_space
+nsteps = 200 # Number of steps for solver optimization
+experiment = 'synthetic'
+cmap = 'seismic'
+tv_weight = 0.00
+num_test = 25
+
+run_posterior_sampling = True
+lr_VI = 1e-2 # Learning rate of inverse scattering solver
+nsteps_VI = 10000 # Number of steps for solver optimization
+reload_VI = False
+test_nb = 0
+beta = 0.05
+mean_optimized = False

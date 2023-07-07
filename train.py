@@ -6,27 +6,25 @@ from models import injective, bijective, prior
 import scattering_solver
 import imageio
 import os
+import config
+import matplotlib.pyplot as plt
 
-FLAGS, unparsed = flags()
-num_epochs = FLAGS.num_epochs
-batch_size = FLAGS.batch_size
-dataset = FLAGS.dataset
-lr = FLAGS.lr
-gpu_num = FLAGS.gpu_num
-desc = FLAGS.desc
-ml_threshold = FLAGS.ml_threshold
-injective_depth = FLAGS.injective_depth
-bijective_depth = FLAGS.bijective_depth
-reload = bool(FLAGS.reload)
-
-initial_guess = FLAGS.initial_guess
-lr_inv = FLAGS.lr_inv
-run_train = bool(FLAGS.train)
-run_inv = bool(FLAGS.inv)
-noise_snr = FLAGS.noise_snr
-er = FLAGS.er
-optimization_mode = FLAGS.optimization_mode
-nsteps = FLAGS.nsteps
+num_epochs = config.num_epochs
+batch_size = config.batch_size
+dataset = config.dataset
+lr = config.lr
+gpu_num = config.gpu_num
+desc = config.desc
+ml_threshold = config.ml_threshold
+injective_depth = config.injective_depth
+bijective_depth = config.bijective_depth
+reload = config.reload
+initial_guess = config.initial_guess
+lr_inv = config.lr_inv
+noise_snr = config.noise_snr
+er = config.er
+optimization_mode = config.optimization_mode
+nsteps = config.nsteps
 
 all_experiments = 'experiments/'
 if os.path.exists(all_experiments) == False:
@@ -94,7 +92,7 @@ if manager.latest_checkpoint and reload:
 else:
     print("Initializing from scratch.")
 
-if run_train:
+if config.run_train:
 
     print('Training...')
     print('---> num_epochs: {}'.format(num_epochs))
@@ -145,9 +143,9 @@ if run_train:
 
             parameters_inj_model = np.sum([np.prod(v.get_shape().as_list()) for v in variables_inj_model])
             parameters_bij_model = np.sum([np.prod(v.get_shape().as_list()) for v in variables_bij_model])
-            print('Number of trainable_parameters of injective model: {}'.format(parameters_inj_model))
-            print('Number of trainable_parameters of bijective model: {}'.format(parameters_bij_model))
-            print('Total number of trainable_parameters: {}'.format(parameters_inj_model + parameters_bij_model))
+            print('Number of trainable parameters of injective model: {}'.format(parameters_inj_model))
+            print('Number of trainable parameters of bijective model: {}'.format(parameters_bij_model))
+            print('Total number of trainable parameters: {}'.format(parameters_inj_model + parameters_bij_model))
     
 
         sample_number = 25 # Number of samples to show
@@ -182,20 +180,20 @@ if run_train:
             image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
             c)*127.5 + 127.5
         test_recon = test_recon.clip(0, 255).astype(np.uint8)
-        imageio.imwrite(os.path.join(image_path_reconstructions, 'recon_%d.png' % (epoch,)),
+        imageio.imwrite(os.path.join(image_path_reconstructions, '%d_recon.png' % (epoch,)),
             test_recon) # Reconstructed test images
         
         test_gt = test_gt.numpy()[:, :, :, ::-1].reshape(ngrid, ngrid,image_size,
             image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1, c)* 127.5 + 127.5
         test_gt = test_gt.clip(0, 255).astype(np.uint8)
-        imageio.imwrite(os.path.join(image_path_reconstructions, 'gt_%d.png' % (epoch,)),
+        imageio.imwrite(os.path.join(image_path_reconstructions, '%d_gt.png' % (epoch,)),
             test_gt) # Ground truth test images
         
         generated_samples = generated_samples[:, :, :, ::-1].reshape(ngrid, ngrid,
             image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
             c)*127.5 + 127.5
         generated_samples = generated_samples.clip(0, 255).astype(np.uint8)
-        imageio.imwrite(os.path.join(image_path_generated, 'samples_%d.png' % (epoch,)),
+        imageio.imwrite(os.path.join(image_path_generated, '%d_samples.png' % (epoch,)),
             generated_samples) # Generated samples
 
         epoch_end = time()       
@@ -211,25 +209,55 @@ if run_train:
         save_path = manager.save()
         print("Saved checkpoint for epoch {}: {}".format(epoch, save_path))
 
-if run_inv:
 
-    print('Solving inverse scattering problem ...:')
-    print('---> dataset: {}'.format(dataset))
-    print('---> experiment path: {}'.format(exp_path))
-    print('---> epsilon_r: {}'.format(er))
-    print('---> noise_snr: {}'.format(noise_snr))
-    print('---> initial guess: {}'.format(initial_guess))
-    print('---> learning rate of inverse problem solver:{}'.format(lr_inv))
-    print('---> optimization mode:{}'.format(optimization_mode))
 
-    testing_images = next(iter(test_dataset))
-    operator = scattering_solver.Inverse_scattering(n_inc_wave = 12 , er = er,
-        image_size = image_size)
-    scattering_solver.solver(testing_images[:25], exp_path,
-                                operator, noise_snr, inj_model, bij_model,
-                                latent_dim,pz= pz,
-                                initial_guess = initial_guess,
-                                nsteps = nsteps,
-                                optimization_mode = optimization_mode,
-                                er = er,
-                                lr_inv = lr_inv)
+print('Solving inverse scattering problem ...:')
+print('---> dataset: {}'.format(dataset))
+print('---> experiment path: {}'.format(exp_path))
+print('---> epsilon_r: {}'.format(er))
+print('---> noise_snr: {}'.format(noise_snr))
+print('---> initial guess: {}'.format(initial_guess))
+print('---> learning rate of inverse problem solver:{}'.format(lr_inv))
+print('---> optimization mode:{}'.format(optimization_mode))
+
+n_test = 1 if config.experiment == 'real' else config.num_test
+testing_images = next(iter(test_dataset))[:n_test]
+operator = scattering_solver.Inverse_scattering(n_inc_wave = 12)
+
+scattering_pipeline = scattering_solver.scattering(exp_path, operator, inj_model, bij_model, pz= pz)
+
+if config.experiment == 'real':
+    setup = np.load('scattering_config/fresnel_1_GtEs.npz')
+    # setup = np.load('scattering_config/fresnel_2_GtEs.npz')
+    testing_images = setup['gt']
+    testing_images = cv2.resize(testing_images , (config.img_size,config.img_size))
+    testing_images = testing_images[None,...][...,None]
+    testing_images_write = (config.er-1) * ((testing_images + 1)/2) + 1
+
+    gt_path = os.path.join(scattering_pipeline.prob_folder, f'gt_real.png')
+    plt.imshow(testing_images_write[0,:,:,0], cmap = config.cmap)
+    plt.colorbar()
+    plt.savefig(gt_path)
+    plt.close()
+                
+
+    testing_images = tf.convert_to_tensor(testing_images)
+    Es = setup['Es']
+    measurements = tf.convert_to_tensor(Es[None,...], tf.complex64)
+
+else:
+    measurements = scattering_pipeline.forward_solver(testing_images)
+
+
+if config.run_mape:
+    if config.optimization_mode == 'latent_space':
+        MAP_estimate = scattering_pipeline.MAP_estimator(measurements, testing_images , lam=0) 
+    elif config.optimization_mode == 'data_space':
+        MAP_estimate = scattering_pipeline.MAP_estimator(measurements, testing_images, lam=1e-2) 
+
+if config.run_posterior_sampling:
+    scattering_pipeline.posterior_sampling(measurements[config.test_nb:config.test_nb+1], testing_images[config.test_nb:config.test_nb+1])
+    # scattering_pipeline.laplace(measurements[config.test_nb:config.test_nb+1], testing_images[config.test_nb:config.test_nb+1])
+
+    
+    

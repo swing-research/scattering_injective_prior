@@ -6,6 +6,8 @@ import tensorflow.keras.layers as layers
 import matplotlib.pyplot as plt
 from utils import *
 import imageio
+import config
+
 
 class Operator(layers.Layer):
     """Base class of operators"""
@@ -22,27 +24,26 @@ class Operator(layers.Layer):
 
     def save(self, path):
         return None
- 
+
+
+
 class Inverse_scattering(Operator):
     """Builds an inverse scattering problem"""
-    def __init__(self,n_inc_wave=4 , er = 3 , image_size = 64):
+    def __init__(self,n_inc_wave=4):
         super(Inverse_scattering, self).__init__()
         
-        if image_size == 32:
-            setup = np.load('scattering_config/setup_32.npz')
-            Gd = setup['Gd']
-            Gs = setup['Gs']
-            Ei = setup['Ei']
-            
-        elif image_size == 64:
-            setup = np.load('scattering_config/setup_64.npz')
-            Gd = setup['Gd']
-            Gs = setup['Gs']
-            Ei = setup['Ei']
-        
-        Ei = Ei[:,::(np.shape(Ei)[1]//n_inc_wave)]
-        Gs = Gs[::(np.shape(Gs)[0] // n_inc_wave), :]
-        
+        setup = np.load(f'scattering_config/setup_{config.experiment}_{config.img_size}.npz')
+        Gd = setup['Gd']
+        Gs = setup['Gs']
+        Ei = setup['Ei']
+
+        if not config.experiment == 'real':
+            Ei = Ei[:,::(np.shape(Ei)[1]//n_inc_wave)]
+            Gs = Gs[::(np.shape(Gs)[0] // n_inc_wave), :]
+
+        # Ei = Ei[:,:180:(np.shape(Ei)[1]//(2*n_inc_wave))]
+        # Gs = Gs[:180:(np.shape(Gs)[0] // (2*n_inc_wave)), :]
+
         print('Ei shape:{}'.format(np.shape(Ei)))
         print('Gd shape:{}'.format(np.shape(Gd)))
         print('Gs shape:{}'.format(np.shape(Gs)))
@@ -51,7 +52,7 @@ class Inverse_scattering(Operator):
         self.Gs = tf.convert_to_tensor(Gs, tf.complex64)
         self.Ei = tf.convert_to_tensor(Ei, tf.complex64)
         self.n = n_inc_wave
-        self.chai = er - 1
+        self.chai = config.er - 1
         self.opname = 'IS_%d'%self.n
 
     def call(self, x):
@@ -97,42 +98,92 @@ class Inverse_scattering(Operator):
         
         return Bp
     
+
+
+
+class scattering(object):
     
+    def __init__(self, exp_path, operator, injective_model, bijective_model, pz):
+        """
+        Args:
+            testing_images (tf.Tensor): ground truth images (x) in the inverse problem
+            exp_path (str): root directory in which to save inverse problem results
+            operator (Operator): forward operator
+            injective_model (tf.keras.Model): the injective part of trumpet
+            bijective_model (tf.keras.Model): the bijective part of trumpet
+            pz (None, tf.distributions): the prior distribution
+        """
 
-
-class InjFlow_PGD(object):
-    """Builds a iflow solver"""
-    def __init__(self, flow, encoder, pz, operator, 
-                 nsteps=1000, 
-                 latent_dim = 192,
-                 sample_shape = (64,64,3),
-                 learning_rate=1e-3,
-                 initial_guess = 'BP',
-                 optimization_mode = 'data_space',
-                 prob_folder = None):
+        prob_folder = os.path.join(exp_path, 'er{}_init_{}_mode_{}_{}'.format(config.er,
+                                                                              config.initial_guess,
+                                                                              config.optimization_mode,
+                                                                              config.problem_desc))
+        if not os.path.exists(prob_folder):
+            os.makedirs(prob_folder, exist_ok=True)
 
         self.op = operator
-        self.flow = flow
-        self.encoder = encoder
+        self.flow = bijective_model
+        self.encoder = injective_model
         self.pz = pz
-        self.nsteps = nsteps
-        self.latent_dim = latent_dim
-        self.sample_shape = sample_shape
-        self.learning_rate = learning_rate
-        self.initial_guess = initial_guess
-        self.optimization_mode = optimization_mode
         self.prob_folder = prob_folder
 
-    def __call__(self, measurements, gt , lam=0):
+    
+    def forward_solver(self, testing_images):
 
+        n_test_samples , image_size , _ , c = tf.shape(testing_images)
+        ngrid = int(np.sqrt(n_test_samples))
+        _ , image_size , _ , c = tf.shape(testing_images)
+
+        x_projected = self.encoder(self.encoder(testing_images, reverse=False)[0], reverse=True)[0].numpy()
+        
+        x_projected = x_projected[:, :, :, ::-1].reshape(ngrid, ngrid,
+            image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+            c)*127.5 + 127.5
+        x_projected = x_projected.clip(0, 255).astype(np.uint8)
+        imageio.imwrite(os.path.join(self.prob_folder, 'projection.png'),x_projected)
+
+
+        measurements = self.op(testing_images[:ngrid**2])
+
+        n_snr = config.noise_snr
+        noise_sigma = 10**(-n_snr/20.0)*tf.math.sqrt(tf.reduce_mean(tf.reduce_sum(
+            tf.math.square(tf.math.abs(tf.reshape(measurements, (ngrid**2, -1)))) , -1)))
+
+        noise_real = tf.random.normal(mean = 0,
+                                stddev = noise_sigma,
+                                shape = np.shape(measurements))/np.sqrt(np.prod(np.shape(measurements)[1:]))
+        noise_imag = tf.random.normal(mean = 0,
+                                stddev = noise_sigma,
+                                shape = np.shape(measurements))/np.sqrt(np.prod(np.shape(measurements)[1:]))
+        
+        noise = tf.complex(noise_real, noise_imag)
+        noise/= np.sqrt(2)
+        measurements = measurements + noise
+
+        gt = testing_images[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
+            image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+            c)*127.5 + 127.5
+        gt = gt.clip(0, 255).astype(np.uint8)
+        imageio.imwrite(os.path.join(self.prob_folder, 'gt.png'),gt)
+
+        bp = self.op.BP(measurements).numpy()[:, :, :, ::-1].reshape(ngrid, ngrid,
+            image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+            c)*127.5 + 127.5
+        bp = bp.clip(0, 255).astype(np.uint8)
+        imageio.imwrite(os.path.join(self.prob_folder, 'BP.png'),bp)
+
+        return measurements
+
+    def MAP_estimator(self, measurements, gt , lam=0):
+
+        @tf.function
         def projection(x):
-            # Project the data on the Trumpets manifold
-            z, rev_obj = self.encoder(x, reverse=False)
+            # Project the data on the Trumpet manifold
+            z, _ = self.encoder(x, reverse=False)
             zhat, flow_obj = self.flow(z, reverse=False)
             p = self.pz.prior.log_prob(zhat)
-            # flow_obj = self.flow.log_prob(zhat)
-            proj_x, fwd_obj = self.encoder(z, reverse=True)
-            return proj_x, -rev_obj -flow_obj -p
+            proj_x, _ = self.encoder(z, reverse=True)
+            return proj_x, -p -flow_obj
 
         @tf.function
         def gradient_step_latent(x_guess_latent, measurements):
@@ -143,11 +194,12 @@ class InjFlow_PGD(object):
                 loss1 = tf.reduce_sum(tf.square(tf.cast(
                     tf.norm(self.op(x_guess) - measurements), dtype=tf.float32)))
                 loss2 = tf.reduce_sum(rev_obj +flow_obj -p)
-                loss = loss1 + lam * loss2
+                tv_loss = tf.reduce_sum(tf.image.total_variation(x_guess))
+                loss = loss1 + lam * loss2 + config.tv_weight * tv_loss
                 grads = tape.gradient(loss, [x_guess_latent])
                 optimizer.apply_gradients(zip(grads, [x_guess_latent]))
 
-            return x_guess, loss , loss1, loss2
+            return x_guess, loss , loss1, loss2, tv_loss
 
 
         @tf.function
@@ -164,36 +216,51 @@ class InjFlow_PGD(object):
             return proj_x_guess, loss, loss1, loss2   
 
         
-        if self.optimization_mode == 'latent_space':
+        if config.optimization_mode == 'latent_space':
 
-            if self.initial_guess == 'BP':
+            n_test_samples , image_size , _ , c = tf.shape(gt)
+            ngrid = int(np.sqrt(n_test_samples))
+            if config.initial_guess == 'BP':
                 BP_image = self.op.BP(measurements)
                 BP_image, _ = self.encoder(BP_image, reverse=False)
                 BP_image, _ = self.flow(BP_image, reverse=False)
                 x_guess_latent = tf.Variable(BP_image, trainable=True)
 
-            elif self.initial_guess == 'MOG':
-                x_guess_latent = tf.repeat(tf.expand_dims(self.pz.mu, axis=0), repeats=[25], axis=0)
+            elif config.initial_guess == 'MOG':
+                x_guess_latent = tf.repeat(tf.expand_dims(self.pz.mu, axis=0), repeats=[gt.shape[0]], axis=0)
                 x_guess_latent = tf.Variable(x_guess_latent, trainable=True)
 
-            optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
-            show_per_iter = 1
-            PSNR_plot = np.zeros([self.nsteps//show_per_iter])
-            SSIM_plot = np.zeros([self.nsteps//show_per_iter])
-            with tqdm(total=self.nsteps//show_per_iter) as pbar:
+            optimizer = tf.keras.optimizers.Adam(learning_rate=config.lr_inv)
+            
+            # Checkpoints of the solver
+            ckpt = tf.train.Checkpoint(x_guess_latent = x_guess_latent, optimizer= optimizer)
+            manager = tf.train.CheckpointManager(
+                ckpt, os.path.join(self.prob_folder, 'solver_checkpoints'), max_to_keep=3)
 
-                for i in range(self.nsteps):
-                    x_guess, loss, loss1 , loss2 = gradient_step_latent(x_guess_latent, measurements)
+            if config.reload_solver:
+                ckpt.restore(manager.latest_checkpoint)
+
+            if manager.latest_checkpoint and config.reload_solver:
+                print("Solver is restored from {}".format(manager.latest_checkpoint))
+            else:
+                print("Solver is initialized from scratch.")
+
+            show_per_iter = 10
+            PSNR_plot = np.zeros([config.nsteps//show_per_iter])
+            SSIM_plot = np.zeros([config.nsteps//show_per_iter])
+            with tqdm(total=config.nsteps//show_per_iter) as pbar:
+                for i in range(config.nsteps):
+                    x_guess, loss, loss1 , loss2, tv_loss = gradient_step_latent(x_guess_latent, measurements)
                     if i % show_per_iter == show_per_iter-1:  
-                        psnr = PSNR(x_guess.numpy(), gt.numpy())
-                        s = SSIM(x_guess.numpy(), gt.numpy())
-                        pbar.set_description('Loss: {:.2f}| NLL: {:.2f}| Data: {:.2f}| PSNR: {:.2f}| SSIM: {:.2f}'.format(
-                            loss.numpy(), loss2.numpy(), loss1.numpy(), psnr, s))
+                        psnr = PSNR(gt.numpy(), x_guess.numpy())
+                        s = SSIM(gt.numpy(), x_guess.numpy())
+                        pbar.set_description('Loss: {:.2f}| NLL: {:.2f}| Data: {:.2f}| TV: {:.2f} | PSNR: {:.2f}| SSIM: {:.2f}'.format(
+                            loss.numpy(), loss2.numpy(), loss1.numpy(), tv_loss.numpy(), psnr, s))
                         pbar.update(1)
 
                         PSNR_plot[i//show_per_iter] = psnr
                         plt.figure(figsize=(10,6), tight_layout=True)
-                        plt.plot(np.arange(self.nsteps//show_per_iter)[:i//show_per_iter] , PSNR_plot[:i//show_per_iter], 'o-', linewidth=2)
+                        plt.plot(np.arange(config.nsteps//show_per_iter)[:i//show_per_iter] , PSNR_plot[:i//show_per_iter], 'o-', linewidth=2)
                         plt.xlabel('iteration')
                         plt.ylabel('PSNR')
                         plt.title('PSNR per {} iteration'.format(show_per_iter))
@@ -202,43 +269,80 @@ class InjFlow_PGD(object):
 
                         SSIM_plot[i//show_per_iter] = s
                         plt.figure(figsize=(10,6), tight_layout=True)
-                        plt.plot(np.arange(self.nsteps//show_per_iter)[:i//show_per_iter] , SSIM_plot[:i//show_per_iter], 'o-', linewidth=2)
+                        plt.plot(np.arange(config.nsteps//show_per_iter)[:i//show_per_iter] , SSIM_plot[:i//show_per_iter], 'o-', linewidth=2)
                         plt.xlabel('iteration')
                         plt.ylabel('SSIM')
                         plt.title('SSIM per {} iteration'.format(show_per_iter))
                         plt.savefig(os.path.join(self.prob_folder, 'SSIM.jpg'))
                         plt.close()
 
+
+                        np.save(os.path.join(self.prob_folder,'MAPE.npy'), x_guess_latent.numpy())
+                        recon_path = os.path.join(self.prob_folder, 'MAPE.png')
+
+                        if config.cmap == 'gray':
+                            x_guess_write = x_guess[0, :, :, ::-1].numpy().reshape(ngrid, ngrid,
+                                image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+                                c)*127.5 + 127.5
+                            x_guess_write = x_guess_write.clip(0, 255).astype(np.uint8)
+                            imageio.imwrite(recon_path,x_guess_write)
+                        
+                        else:
+                            x_guess_write = x_guess[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
+                                image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+                                c)
+                            x_guess_write = (config.er-1) * ((x_guess_write + 1)/2) + 1
+                            
+                            plt.imshow(x_guess_write[:,:,0], cmap = config.cmap)
+                            plt.colorbar()
+                            plt.savefig(recon_path)
+                            plt.close()
+
                         with open(os.path.join(self.prob_folder, 'results.txt'), 'a') as f:
                             f.write('Loss: {:.2f}| NLL: {:.2f}| Data: {:.2f}| PSNR: {:.2f}| ssim: {:.2f}'.format(
                                 loss.numpy(), loss2.numpy(), loss1.numpy(), psnr, s))
                             f.write('\n')
+                        
+                        manager.save()
 
-            return x_guess
+
+
         
-        elif self.optimization_mode == 'data_space':
-            if self.initial_guess == 'BP':
+        elif config.optimization_mode == 'data_space':
+            if config.initial_guess == 'BP':
                 x_guess = tf.Variable(self.op.BP(measurements), trainable=True)
-            elif self.initial_guess == 'MOG':
-                x_guess_latent = tf.repeat(tf.expand_dims(self.pz.mu, axis=0), repeats=[25], axis=0)
+            elif config.initial_guess == 'MOG':
+                x_guess_latent = tf.repeat(tf.expand_dims(self.pz.mu, axis=0), repeats=[gt.shape[0]], axis=0)
                 x_guess, _ = self.flow(x_guess_latent, reverse=True)
                 x_guess, _ = self.encoder(x_guess, reverse=True)
                 x_guess = tf.Variable(x_guess, trainable=True)
-                np.save('Initial_Guess.npy', x_guess[0])
 
-            optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=config.lr_inv)
+            
+            # Checkpoints of the solver
+            ckpt = tf.train.Checkpoint(x_guess = x_guess, optimizer= optimizer)
+            manager = tf.train.CheckpointManager(
+                ckpt, os.path.join(self.prob_folder, 'solver_checkpoints'), max_to_keep=3)
 
-            show_per_iter = 1
-            PSNR_plot = np.zeros([self.nsteps//show_per_iter])
-            SSIM_plot = np.zeros([self.nsteps//show_per_iter])
-            with tqdm(total=self.nsteps) as pbar:
+            if config.reload_solver:
+                ckpt.restore(manager.latest_checkpoint)
 
-                for i in range(self.nsteps):
+            if manager.latest_checkpoint and config.reload_solver:
+                print("Solver is restored from {}".format(manager.latest_checkpoint))
+            else:
+                print("Solver is initialized from scratch.")            
+
+            show_per_iter = 10
+            PSNR_plot = np.zeros([config.nsteps//show_per_iter])
+            SSIM_plot = np.zeros([config.nsteps//show_per_iter])
+            with tqdm(total=config.nsteps//show_per_iter) as pbar:
+
+                for i in range(config.nsteps):
                     proj_x_guess, loss, loss1 , loss2 = gradient_step_data(x_guess, measurements)
 
                     if i % show_per_iter == show_per_iter-1:  
-                        psnr = PSNR(proj_x_guess.numpy(), gt.numpy())
-                        s = SSIM(proj_x_guess.numpy(), gt.numpy())
+                        psnr = PSNR(gt.numpy(), proj_x_guess.numpy())
+                        s = SSIM(gt.numpy(), proj_x_guess.numpy())
                         pbar.set_description('Loss: {:.2f}| NLL: {:.2f}| Data: {:.2f}| PSNR: {:.2f}| ssim: {:.2f}'.format(
                             loss.numpy(), loss2.numpy(), loss1.numpy(), psnr, s))
 
@@ -247,7 +351,7 @@ class InjFlow_PGD(object):
                         PSNR_plot[i//show_per_iter] = psnr
         
                         plt.figure(figsize=(10,6), tight_layout=True)
-                        plt.plot(np.arange(self.nsteps//show_per_iter)[:i//show_per_iter] , PSNR_plot[:i//show_per_iter], 'o-', linewidth=2)
+                        plt.plot(np.arange(config.nsteps//show_per_iter)[:i//show_per_iter] , PSNR_plot[:i//show_per_iter], 'o-', linewidth=2)
                         plt.xlabel('iteration')
                         plt.ylabel('PSNR')
                         plt.title('PSNR per {} iteration'.format(show_per_iter))
@@ -256,7 +360,7 @@ class InjFlow_PGD(object):
 
                         SSIM_plot[i//show_per_iter] = s
                         plt.figure(figsize=(10,6), tight_layout=True)
-                        plt.plot(np.arange(self.nsteps//show_per_iter)[:i//show_per_iter] , SSIM_plot[:i//show_per_iter], 'o-', linewidth=2)
+                        plt.plot(np.arange(config.nsteps//show_per_iter)[:i//show_per_iter] , SSIM_plot[:i//show_per_iter], 'o-', linewidth=2)
                         plt.xlabel('iteration')
                         plt.ylabel('SSIM')
                         plt.title('SSIM per {} iteration'.format(show_per_iter))
@@ -268,98 +372,152 @@ class InjFlow_PGD(object):
                                 loss.numpy(), loss2.numpy(), loss1.numpy(), psnr, s))
                             f.write('\n')
 
-            return projection(x_guess)[0]
+                        manager.save()
 
+            x_guess = projection(x_guess)[0]
+            n_test_samples , image_size , _ , c = tf.shape(gt)
+            ngrid = int(np.sqrt(n_test_samples))
+            recon_path = os.path.join(self.prob_folder, 'Reconstructions.png')
+            x_guess_write = x_guess[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
+                image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+                c)*127.5 + 127.5
+            x_guess_write = x_guess_write.clip(0, 255).astype(np.uint8)
+            imageio.imwrite(recon_path,x_guess_write)
 
-def solver(
-    testing_images,
-    exp_path,
-    operator,
-    noise_snr,
-    injective_model,
-    bijective_model,
-    latent_dim,
-    pz,
-    initial_guess,
-    nsteps, 
-    optimization_mode,
-    er,
-    lr_inv):
-    """
-    Args:
-        testing_images (tf.Tensor): ground truth images (x) in the inverse problem
-        exp_path (str): root directory in which to save inverse problem results
-        operator (Operator): forward operator
-        noise_snr (float): Noise snr
-        injective_model (tf.keras.Model): the injective part of trumpet
-        bijective_model (tf.keras.Model): the bijective part of trumpet
-        pz (None, tf.distributions): the prior distribution
-        initial_guess: the initialization of optimization: BP or MOG
-        nsteps: Number of iterations
-        optimization_mode: To do optimization in latent space or data space: {latent_space, data_space}
-        er: Maximum epsilon_r of the medium
-        lr_inv: learning rate
-    """
+        return x_guess
 
-    ngrid = 5
-    _ , image_size , _ , c = tf.shape(testing_images)
+    def posterior_sampling(self, measurements, gt):
+        
+        @tf.function
+        def gradient_step_VI(mape, log_sigma_q , measurements, beta):
+            with tf.GradientTape() as tape:
+                epsilon = tf.random.normal(mape.shape)
+                z = mape + epsilon * tf.exp(log_sigma_q)
+                z, _ = self.flow(z, reverse=True)
+                x, _ = self.encoder(z, reverse=True)
+                
+                loss1 = tf.reduce_mean(tf.square(tf.cast(
+                    tf.norm(self.op(x) - measurements), dtype=tf.float32)))
+                
+                loss2 = tf.reduce_mean(tf.reduce_sum(tf.square(tf.exp(log_sigma_q)) - 2*log_sigma_q, axis = 1))
+                tv_loss = tf.reduce_sum(tf.image.total_variation(x))
+                loss = loss1 + beta*loss2 + config.tv_weight * tv_loss
+                grads = tape.gradient(loss, [log_sigma_q])
+                optimizer_VI.apply_gradients(zip(grads, [log_sigma_q]))
 
-    prob_folder = os.path.join(exp_path, 'er{}_init_{}_nsteps_{}_mode_{}'.format(er,initial_guess,nsteps,optimization_mode))
-    if not os.path.exists(prob_folder):
-        os.makedirs(prob_folder, exist_ok=True)
+            return x, loss , loss1, loss2, tv_loss
+        
+        mape = np.load(os.path.join(self.prob_folder,'MAPE.npy'))[config.test_nb:config.test_nb+1]
+        mape = tf.convert_to_tensor(mape, dtype = tf.float32)
+        log_sigma_q = tf.zeros(mape.shape)
+        mape = tf.Variable(mape, trainable=config.mean_optimized)
+        log_sigma_q = tf.Variable(log_sigma_q, trainable=True)
+        optimizer_VI = tf.keras.optimizers.Adam(learning_rate=config.lr_VI)
 
-    x_projected = injective_model(injective_model(testing_images, reverse=False)[0], reverse=True)[0].numpy()
+        # Checkpoints of the VI
+        ckpt = tf.train.Checkpoint(log_sigma_q = log_sigma_q, optimizer_VI= optimizer_VI, mape = mape)
+        manager = tf.train.CheckpointManager(
+            ckpt, os.path.join(self.prob_folder, f'VI_checkpoints_{config.beta}_{config.test_nb}_{config.mean_optimized}'), max_to_keep=3)
+
+        if config.reload_VI:
+            ckpt.restore(manager.latest_checkpoint)
+
+        if manager.latest_checkpoint and config.reload_VI:
+            print("VI is restored from {}".format(manager.latest_checkpoint))
+        else:
+            print("VI is initialized from scratch.")           
+
+        show_per_iter = 100
+        num_posterior = 25
+
+        with tqdm(total=config.nsteps_VI//show_per_iter) as pbar:
+            for i in range(config.nsteps_VI):
+                x, loss, loss1 , loss2, tv_loss = gradient_step_VI(mape, log_sigma_q,
+                                                                measurements, beta = config.beta)
+                if i % show_per_iter == show_per_iter-1:  
+                    epsilon = tf.random.normal([num_posterior,mape.shape[1]], seed = 0)
+                    z = mape + epsilon * tf.exp(log_sigma_q)
+                    z, _ = self.flow(z, reverse=True)
+                    posterior_samples, _ = self.encoder(z, reverse=True)
+                    mmse =  posterior_samples.numpy().mean(axis = 0, keepdims = True)
+                    uq = posterior_samples.numpy().std(axis = 0, keepdims = True)
+                    psnr_mmse = PSNR(gt.numpy(),mmse)
+                    s_mmse = SSIM(gt.numpy(), mmse)
+
+                    mape_data, _ =  self.flow(mape, reverse=True)
+                    mape_data, _ = self.encoder(mape_data, reverse=True)
+                    psnr_map = PSNR(gt.numpy(),mape_data.numpy())
+                    s_map = SSIM(gt.numpy(), mape_data.numpy())
+
+                    pbar.set_description('Loss: {:.2f}| data: {:.2f}| kl: {:.2f}| TV: {:.2f}| PSNR_mmse: {:.2f}| SSIM_mmse: {:.2f} | PSNR_mape: {:.2f}| SSIM_mape: {:.2f}'.format(
+                        loss.numpy(), loss1.numpy(), loss2.numpy(), tv_loss.numpy(), psnr_mmse, s_mmse, psnr_map, s_map))
+                    pbar.update(1)
+
+                    with open(os.path.join(self.prob_folder, f'results_{config.beta}_{config.test_nb}_{config.mean_optimized}.txt'), 'a') as f:
+                        f.write('Loss: {:.2f}| data: {:.2f}| kl: {:.2f}| TV: {:.2f}| PSNR_mmse: {:.2f}| SSIM_mmse: {:.2f} | PSNR_mape: {:.2f}| SSIM_mape: {:.2f}'.format(
+                        loss.numpy(), loss1.numpy(), loss2.numpy(), tv_loss.numpy(), psnr_mmse, s_mmse, psnr_map, s_map))
+                        f.write('\n')
+   
+                    _ , image_size , _ , c = tf.shape(gt)
+                    ngrid = int(np.sqrt(num_posterior))
+                    posterior_path = os.path.join(self.prob_folder, f'posterior_samples_{config.beta}_{config.test_nb}_{config.mean_optimized}.png')
+
+                    if config.experiment == 'gray':
+                        posterior_samples_write = posterior_samples[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
+                            image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+                            c)*127.5 + 127.5
+                        posterior_samples_write = posterior_samples_write.clip(0, 255).astype(np.uint8)
+                        imageio.imwrite(posterior_path,posterior_samples_write)
+
+                        mmse = mmse * 127.5 + 127.5
+                        mmse = mmse.clip(0, 255).astype(np.uint8)
+                        imageio.imwrite(os.path.join(self.prob_folder, f'mmse_{config.beta}_{config.test_nb}_{config.mean_optimized}.png'),mmse[0])
+
+                    
+                    else:
+                        posterior_samples_write = posterior_samples[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
+                            image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
+                            c)
+                        
+                        posterior_samples_write = (config.er-1) * ((posterior_samples_write + 1)/2) + 1
+                
+                        plt.imshow(posterior_samples_write[:,:,0], cmap = config.cmap)
+                        plt.colorbar()
+                        plt.savefig(posterior_path)
+                        plt.close()
+
+                        plt.imshow(mmse[0,:,:,0], cmap = config.cmap)
+                        plt.colorbar()
+                        plt.savefig(os.path.join(self.prob_folder, f'mmse_{config.beta}_{config.test_nb}_{config.mean_optimized}.png'))
+                        plt.close()
+                        plt.imsave(os.path.join(self.prob_folder, f'uq_{config.beta}_{config.test_nb}_{config.mean_optimized}.png'), uq[0,:,:,0], cmap = 'seismic')
+                        np.savez(os.path.join(self.prob_folder, f'{config.beta}_{config.test_nb}_{config.mean_optimized}.npz'),
+                                 gt = gt.numpy()[0,:,:,0], mape = mape_data.numpy()[0,:,:,0], uq = uq[0,:,:,0], mmse =  mmse[0,:,:,0], posterior_samples = posterior_samples_write)
+                    manager.save()
+
     
-    x_projected = x_projected[:, :, :, ::-1].reshape(ngrid, ngrid,
-        image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
-        c)*127.5 + 127.5
-    x_projected = x_projected.clip(0, 255).astype(np.uint8)
-    imageio.imwrite(os.path.join(prob_folder, 'projection.png'),x_projected)
+    def laplace(self, measurements, gt):
+        mape = np.load(os.path.join(self.prob_folder,'MAPE.npy'))[config.test_nb]
+        mape = tf.convert_to_tensor(mape, dtype = tf.float32)
+        print(mape.shape)
 
-
-    iflow = InjFlow_PGD(bijective_model, injective_model, pz, operator, 
-        latent_dim=latent_dim, learning_rate = lr_inv ,
-         initial_guess = initial_guess, nsteps = nsteps,
-          optimization_mode = optimization_mode, prob_folder = prob_folder)
-
-    measurements = iflow.op(testing_images[:ngrid**2])
-
-    n_snr = noise_snr
-    noise_sigma = 10**(-n_snr/20.0)*tf.math.sqrt(tf.reduce_mean(tf.reduce_sum(
-        tf.math.square(tf.math.abs(tf.reshape(measurements, (ngrid**2, -1)))) , -1)))
-
-    noise_real = tf.random.normal(mean = 0,
-                              stddev = noise_sigma,
-                              shape = np.shape(measurements))/np.sqrt(np.prod(np.shape(measurements)[1:]))
-    noise_imag = tf.random.normal(mean = 0,
-                              stddev = noise_sigma,
-                              shape = np.shape(measurements))/np.sqrt(np.prod(np.shape(measurements)[1:]))
+        with tf.GradientTape() as g:
+            g.watch(mape)
+            with tf.GradientTape() as gg:
+                gg.watch(mape)
+                z = mape[None,...]
+                z_inter, _ = self.flow(z, reverse=True)
+                # x, _ = self.encoder(z_inter, reverse=True)
+                x= z_inter
+                l = tf.square(tf.cast(tf.norm(x), dtype=tf.float32))
+                # l = tf.square(tf.cast(tf.norm(self.op(x) - measurements), dtype=tf.float32))
+            
+            print(l.shape)
+            grads = gg.gradient(l , mape)
+            print(grads.shape)
+        hessian = g.jacobian(grads, mape)
+        print(hessian.shape)
     
-    noise = tf.complex(noise_real, noise_imag)
-    noise/= np.sqrt(2)
-    measurements = measurements + noise
 
-    gt = testing_images[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
-        image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
-        c)*127.5 + 127.5
-    gt = gt.clip(0, 255).astype(np.uint8)
-    imageio.imwrite(os.path.join(prob_folder, 'gt.png'),gt)
-
-    bp = operator.BP(measurements).numpy()[:, :, :, ::-1].reshape(ngrid, ngrid,
-        image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
-        c)*127.5 + 127.5
-    bp = bp.clip(0, 255).astype(np.uint8)
-    imageio.imwrite(os.path.join(prob_folder, 'BP.png'),bp)
-
-    if initial_guess == 'MOG':
-        injflow_result = iflow(measurements, testing_images , lam=0) 
-    elif initial_guess == 'BP':
-        injflow_result = iflow(measurements, testing_images, lam=1e-2) 
-    
-    injflow_path = os.path.join(prob_folder, 'Reconstructions.png')
-    injflow_result = injflow_result[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
-        image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
-        c)*127.5 + 127.5
-    injflow_result = injflow_result.clip(0, 255).astype(np.uint8)
-    imageio.imwrite(injflow_path,injflow_result)
+        
 
