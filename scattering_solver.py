@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from utils import *
 import imageio
 import config
+from time import time
 
 
 class Operator(layers.Layer):
@@ -140,7 +141,7 @@ class scattering(object):
             image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
             c)*127.5 + 127.5
         x_projected = x_projected.clip(0, 255).astype(np.uint8)
-        imageio.imwrite(os.path.join(self.prob_folder, 'projection.png'),x_projected)
+        imageio.imwrite(os.path.join(self.prob_folder, 'projection.png'),x_projected[:,:,0])
 
 
         measurements = self.op(testing_images[:ngrid**2])
@@ -164,13 +165,13 @@ class scattering(object):
             image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
             c)*127.5 + 127.5
         gt = gt.clip(0, 255).astype(np.uint8)
-        imageio.imwrite(os.path.join(self.prob_folder, 'gt.png'),gt)
+        imageio.imwrite(os.path.join(self.prob_folder, 'gt.png'),gt[:,:,0])
 
         bp = self.op.BP(measurements).numpy()[:, :, :, ::-1].reshape(ngrid, ngrid,
             image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
             c)*127.5 + 127.5
         bp = bp.clip(0, 255).astype(np.uint8)
-        imageio.imwrite(os.path.join(self.prob_folder, 'BP.png'),bp)
+        imageio.imwrite(os.path.join(self.prob_folder, 'BP.png'),bp[:,:,0])
 
         return measurements
 
@@ -185,7 +186,7 @@ class scattering(object):
             proj_x, _ = self.encoder(z, reverse=True)
             return proj_x, -p -flow_obj
 
-        @tf.function
+        # @tf.function
         def gradient_step_latent(x_guess_latent, measurements):
             with tf.GradientTape() as tape:
                 x_guess, flow_obj = self.flow(x_guess_latent, reverse=True)
@@ -200,6 +201,50 @@ class scattering(object):
                 optimizer.apply_gradients(zip(grads, [x_guess_latent]))
 
             return x_guess, loss , loss1, loss2, tv_loss
+        
+
+        # @tf.function
+        def gradient_step_latent_fast(x_guess_latent, measurements):
+            b = x_guess_latent.shape[0]
+            with tf.GradientTape(persistent=True) as tape:
+                tape.watch(x_guess_latent)
+                t1 = time()
+                x_guess, flow_obj = self.flow(x_guess_latent, reverse=True)
+                x_guess, rev_obj = self.encoder(x_guess, reverse=True)
+                p = self.pz.prior.log_prob(x_guess_latent)
+                t2 = time()
+                print(t2-t1)
+                data_shape = x_guess.shape
+                x_guess_reshaped = tf.reshape(x_guess, [b, -1])
+                x_guess = tf.reshape(x_guess_reshaped, data_shape)
+                
+                y = self.op(x_guess)
+                t3 = time()
+                print(t3 - t2)
+                l_data = tf.reduce_sum(tf.square(tf.cast(
+                    tf.norm(y - measurements), dtype=tf.float32)))
+                l_likelihood = tf.reduce_sum(rev_obj +flow_obj -p)
+                l_tv = tf.reduce_sum(tf.image.total_variation(x_guess))
+                loss = l_data + lam * l_likelihood + config.tv_weight * l_tv
+                
+            s = time()
+            j_f = tape.batch_jacobian(x_guess_reshaped, x_guess_latent) 
+            s1 = time()
+            print(j_f.shape, s1 - s)
+            j_A = tape.batch_jacobian(y, x_guess_reshaped)
+            s2 = time()
+            print(j_A.shape, s2 - s1)
+            j_l = tape.gradient(l_data, y)
+            s3 = time()
+            print(j_l.shape, s3 - s2)
+            g_data = j_l
+            g_likelihood = tape.gradient(l_likelihood, x_guess_latent)
+            g_tv = tape.gradient(loss, l_tv, x_guess_latent)
+            grads = g_data + lam * g_likelihood + config.tv_weight * g_tv
+            optimizer.apply_gradients(zip(grads, [x_guess_latent]))
+
+            return x_guess, loss , loss1, loss2, tv_loss
+
 
 
         @tf.function
@@ -216,7 +261,7 @@ class scattering(object):
             return proj_x_guess, loss, loss1, loss2   
 
         
-        if config.optimization_mode == 'latent_space':
+        if config.optimization_mode == 'lso':
 
             n_test_samples , image_size , _ , c = tf.shape(gt)
             ngrid = int(np.sqrt(n_test_samples))
@@ -245,12 +290,15 @@ class scattering(object):
             else:
                 print("Solver is initialized from scratch.")
 
-            show_per_iter = 10
+            show_per_iter = 450
             PSNR_plot = np.zeros([config.nsteps//show_per_iter])
             SSIM_plot = np.zeros([config.nsteps//show_per_iter])
             with tqdm(total=config.nsteps//show_per_iter) as pbar:
+
+                start = time()
                 for i in range(config.nsteps):
                     x_guess, loss, loss1 , loss2, tv_loss = gradient_step_latent(x_guess_latent, measurements)
+                    
                     if i % show_per_iter == show_per_iter-1:  
                         psnr = PSNR(gt.numpy(), x_guess.numpy())
                         s = SSIM(gt.numpy(), x_guess.numpy())
@@ -285,7 +333,7 @@ class scattering(object):
                                 image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
                                 c)*127.5 + 127.5
                             x_guess_write = x_guess_write.clip(0, 255).astype(np.uint8)
-                            imageio.imwrite(recon_path,x_guess_write)
+                            imageio.imwrite(recon_path,x_guess_write[:,:,0])
                         
                         else:
                             x_guess_write = x_guess[:, :, :, ::-1].numpy().reshape(ngrid, ngrid,
@@ -305,10 +353,12 @@ class scattering(object):
                         
                         manager.save()
 
+                end = time()
+                print(f'Ellapsed time: {end - start}')
 
 
         
-        elif config.optimization_mode == 'data_space':
+        elif config.optimization_mode == 'dso':
             if config.initial_guess == 'BP':
                 x_guess = tf.Variable(self.op.BP(measurements), trainable=True)
             elif config.initial_guess == 'MOG':
@@ -332,11 +382,12 @@ class scattering(object):
             else:
                 print("Solver is initialized from scratch.")            
 
-            show_per_iter = 10
+            show_per_iter = 450
             PSNR_plot = np.zeros([config.nsteps//show_per_iter])
             SSIM_plot = np.zeros([config.nsteps//show_per_iter])
             with tqdm(total=config.nsteps//show_per_iter) as pbar:
 
+                start = time()
                 for i in range(config.nsteps):
                     proj_x_guess, loss, loss1 , loss2 = gradient_step_data(x_guess, measurements)
 
@@ -373,6 +424,9 @@ class scattering(object):
                             f.write('\n')
 
                         manager.save()
+                
+                end = time()
+                print(f'Ellapsed time: {end - start}')
 
             x_guess = projection(x_guess)[0]
             n_test_samples , image_size , _ , c = tf.shape(gt)
@@ -382,7 +436,7 @@ class scattering(object):
                 image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
                 c)*127.5 + 127.5
             x_guess_write = x_guess_write.clip(0, 255).astype(np.uint8)
-            imageio.imwrite(recon_path,x_guess_write)
+            imageio.imwrite(recon_path,x_guess_write[:,:,0])
 
         return x_guess
 
@@ -467,11 +521,11 @@ class scattering(object):
                             image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
                             c)*127.5 + 127.5
                         posterior_samples_write = posterior_samples_write.clip(0, 255).astype(np.uint8)
-                        imageio.imwrite(posterior_path,posterior_samples_write)
+                        imageio.imwrite(posterior_path,posterior_samples_write[:,:,0])
 
                         mmse = mmse * 127.5 + 127.5
                         mmse = mmse.clip(0, 255).astype(np.uint8)
-                        imageio.imwrite(os.path.join(self.prob_folder, f'mmse_{config.beta}_{config.test_nb}_{config.mean_optimized}.png'),mmse[0])
+                        imageio.imwrite(os.path.join(self.prob_folder, f'mmse_{config.beta}_{config.test_nb}_{config.mean_optimized}.png'),mmse[0,:,:,0])
 
                     
                     else:

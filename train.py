@@ -9,6 +9,7 @@ import os
 import config
 import matplotlib.pyplot as plt
 
+
 num_epochs = config.num_epochs
 batch_size = config.batch_size
 dataset = config.dataset
@@ -181,20 +182,20 @@ if config.run_train:
             c)*127.5 + 127.5
         test_recon = test_recon.clip(0, 255).astype(np.uint8)
         imageio.imwrite(os.path.join(image_path_reconstructions, '%d_recon.png' % (epoch,)),
-            test_recon) # Reconstructed test images
+            test_recon[:,:,0]) # Reconstructed test images
         
         test_gt = test_gt.numpy()[:, :, :, ::-1].reshape(ngrid, ngrid,image_size,
             image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1, c)* 127.5 + 127.5
         test_gt = test_gt.clip(0, 255).astype(np.uint8)
         imageio.imwrite(os.path.join(image_path_reconstructions, '%d_gt.png' % (epoch,)),
-            test_gt) # Ground truth test images
+            test_gt[:,:,0]) # Ground truth test images
         
         generated_samples = generated_samples[:, :, :, ::-1].reshape(ngrid, ngrid,
             image_size, image_size, c).swapaxes(1, 2).reshape(ngrid*image_size, -1,
             c)*127.5 + 127.5
         generated_samples = generated_samples.clip(0, 255).astype(np.uint8)
         imageio.imwrite(os.path.join(image_path_generated, '%d_samples.png' % (epoch,)),
-            generated_samples) # Generated samples
+            generated_samples[:,:,0]) # Generated samples
 
         epoch_end = time()       
         ellapsed_time = epoch_end - epoch_start
@@ -250,9 +251,9 @@ else:
 
 
 if config.run_mape:
-    if config.optimization_mode == 'latent_space':
+    if config.optimization_mode == 'lso':
         MAP_estimate = scattering_pipeline.MAP_estimator(measurements, testing_images , lam=0) 
-    elif config.optimization_mode == 'data_space':
+    elif config.optimization_mode == 'dso':
         MAP_estimate = scattering_pipeline.MAP_estimator(measurements, testing_images, lam=1e-2) 
 
 if config.run_posterior_sampling:
