@@ -4,71 +4,8 @@ import cv2
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 import config
-from tqdm import tqdm
-from matplotlib.patches import Ellipse, Circle
-import matplotlib.pyplot as plt
-import numpy.random as rnd
-import os
 
 
-def fantom_generation(n_samples = 60000 ,
-                       num_fantom_max = 4 ,
-                       generation = True):
-    
-    if generation:
-        
-        with tqdm(total=n_samples) as pbar: 
-            for k in range(n_samples):
-                
-                num_fantom = np.random.randint(1,num_fantom_max)
-                fantoms = [Circle(rnd.uniform(3,7 , 2),
-                                  rnd.uniform(1,4))
-                        for i in range(num_fantom)]
-                
-                fig = plt.figure(figsize = ( 4, 4) , dpi = 64)
-                ax = fig.add_subplot(111 , frameon=False)
-                for e in fantoms:
-                    ax.add_artist(e)
-                    e.set_clip_box(ax.bbox)
-                    e.set_alpha(np.random.uniform(0.3 , 1))
-                    e.set_facecolor([0,0,0])
-                
-                ax.set_xlim(0, 10)
-                ax.set_ylim(0, 10)
-                
-                ax.axes.xaxis.set_visible(False)
-                ax.axes.yaxis.set_visible(False)
-                
-                plt.show()
-                fig.savefig('datasets/circles_256/{}.png'.format(k))
-                plt.close()
-    
-                pbar.set_description('generating...')
-                pbar.update(1)
-                
-    else:
-        
-        folder = 'datasets/circles_256/'
-        image_names = os.listdir(folder)
-        r = 64
-        n_samples = len(image_names)
-        
-        x = np.zeros([n_samples,r,r,1])
-        
-        with tqdm(total=n_samples) as pbar: 
-            for i in range(len(image_names)):
-                
-                image_add = folder + image_names[i]
-                image = cv2.imread(image_add)
-                if image is None:
-                    continue
-                image = 255.0 - image
-                x[i , :, :, 0] = cv2.resize(image , (r,r))[:,:,0]
-                
-                pbar.set_description('processing...')
-                pbar.update(1)
-        
-        np.save('datasets/circles_64.npy' , x)
 
 @tf.function
 def train_step_mse(sample, inj_model, optimizer_inj):
@@ -123,15 +60,14 @@ def image_resizer(x , r):
             if nch == 1:
                 y[i,:,:,0] = cv2.resize(x[i] , (r,r))
             else:
-                y[i] = cv2.resize(x[i] , (r,r))
-                
+                y[i] = cv2.resize(x[i] , (r,r))         
     else:
         y = x
         
     return y
  
+
 def PSNR(x_true , x_pred):
-    
     s = 0
     for i in range(np.shape(x_pred)[0]):
         s += psnr(x_true[i],
@@ -141,7 +77,6 @@ def PSNR(x_true , x_pred):
     return s/np.shape(x_pred)[0]
 
 def SSIM(x_true , x_pred):
-    
     s = 0
     for i in range(np.shape(x_pred)[0]):
         s += ssim(x_true[i],
@@ -158,7 +93,7 @@ def Dataset_preprocessing(dataset = 'MNIST', batch_size = 64):
     if dataset == 'mnist':
 
         (train_images, train_labels), (test_images, _) = tf.keras.datasets.mnist.load_data()
-        if config.ood_analysis:
+        if config.ood_experiment:
 
             np.random.seed(0)
 
@@ -180,11 +115,6 @@ def Dataset_preprocessing(dataset = 'MNIST', batch_size = 64):
     elif dataset == 'ellipses':
         
         images = np.load('datasets/ellipses_64.npy')
-        train_images , test_images = np.split(images , [55000])
-
-    elif dataset == 'circles':
-        
-        images = np.load('datasets/circles_64.npy')
         train_images , test_images = np.split(images , [55000])
 
     r = config.img_size
@@ -209,8 +139,3 @@ def Dataset_preprocessing(dataset = 'MNIST', batch_size = 64):
     test_dataset = test_dataset.batch(batch_size)
 
     return train_dataset , test_dataset
-      
-  
-
-if __name__ == '__main__':
-    fantom_generation(n_samples=60000, num_fantom_max=4, generation= False)
