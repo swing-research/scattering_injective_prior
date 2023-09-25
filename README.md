@@ -2,7 +2,7 @@
 [![Paper](https://img.shields.io/badge/arxiv-report-red)](https://arxiv.org/abs/2301.03092)
 [![PWC](https://img.shields.io/badge/PWC-report-blue)](https://paperswithcode.com/paper/deep-injective-prior-for-inverse-scattering)
 
-This repository is the official Tensorflow Python implementation of "[Deep Injective Prior for Inverse Scattering](https://arxiv.org/abs/2301.03092)".
+This repository is the official Tensorflow Python implementation of "[Deep Injective Prior for Inverse Scattering](https://arxiv.org/abs/2301.03092)" published in IEEE Transactions on Antennas and Propagation, 2023.
 
 | [**Project Page**](https://sada.dmi.unibas.ch/en/research/injective-flows)  | 
 
@@ -46,10 +46,11 @@ python3 main.py
 If you find the code or our dataset useful in your research, please consider citing the paper.
 
 ```
-@article{khorashadizadeh2022deepinjective,
+@article{khorashadizadeh2023deep,
   title={Deep Injective Prior for Inverse Scattering},
-  author={Khorashadizadeh, AmirEhsan and Khorashadizadeh, Vahid and Vandenbosch Guy A.E. and Eskandari, Sepehr and Dokmani{\'c}, Ivan},
-  journal={arXiv preprint arXiv:2301.03092},
-  year={2023}
+  author={Khorashadizadeh, AmirEhsan and Khorashadizadeh, Vahid and Eskandari, Sepehr and Vandenbosch, Guy AE and Dokmani{\'c}, Ivan},
+  journal={IEEE Transactions on Antennas and Propagation},
+  year={2023},
+  publisher={IEEE}
 }
 ```
